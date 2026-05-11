@@ -1,119 +1,63 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Air Writing App</title>
+<title>Air Writing Stable Fix</title>
+
 <style>
-    body {
-        margin: 0;
-        overflow: hidden;
-        background: black;
-        font-family: Arial, sans-serif;
-    }
+body{
+    margin:0;
+    background:black;
+    overflow:hidden;
+}
 
-    /* LIVE CAMERA BACKGROUND */
-    video {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        object-fit: cover;
-        z-index: 0;
-        transform: scaleX(-1); /* mirror like mirror view */
-    }
+video{
+    position:fixed;
+    width:1px;
+    height:1px;
+    opacity:0;
+}
 
-    canvas {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        z-index: 1;
-        pointer-events: none;
-    }
-
-    #ui {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        z-index: 2;
-        background: rgba(0,0,0,0.5);
-        padding: 10px;
-        border-radius: 10px;
-        backdrop-filter: blur(10px);
-        color: white;
-    }
-
-    input { margin: 5px 0; }
+canvas{
+    position:fixed;
+    top:0;
+    left:0;
+}
 </style>
 </head>
+
 <body>
-
-<div id="ui">
-    <label>Color:</label>
-    <input type="color" id="colorPicker" value="#00ffff" /><br/>
-
-    <label>Brush Size:</label>
-    <input type="range" id="brushSize" min="2" max="40" value="6" />
-</div>
 
 <video id="video" autoplay playsinline></video>
 <canvas id="canvas"></canvas>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <script>
-const videoElement = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
 
-function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-}
-resizeCanvas();
-window.addEventListener('resize', resizeCanvas);
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
 
-let drawing = true;
-let lastX = null;
-let lastY = null;
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-const colorPicker = document.getElementById('colorPicker');
-const brushSize = document.getElementById('brushSize');
+/* 👉 IMPORTANT: per-hand memory */
+let last = {
+    Left: null,
+    Right: null
+};
 
-function getFingerState(lm) {
-    return {
-        fingers: [
-            lm[8].y < lm[6].y,
-            lm[12].y < lm[10].y,
-            lm[16].y < lm[14].y,
-            lm[20].y < lm[18].y
-        ]
-    };
-}
-
-function isFist(state) {
-    return state.fingers.every(f => !f);
-}
-
-function isOpenPalm(state) {
-    return state.fingers.every(f => f);
-}
-
-function isIndexOnly(state) {
-    return state.fingers[0] && !state.fingers[1] && !state.fingers[2] && !state.fingers[3];
-}
-
-function drawGlow(x1,y1,x2,y2,color,size){
-    ctx.strokeStyle = color;
-    ctx.lineWidth = size;
+/* ===== ELECTRIC DRAW ===== */
+function draw(x1,y1,x2,y2){
+    ctx.strokeStyle = "#00ffff";
+    ctx.lineWidth = 5;
     ctx.lineCap = "round";
 
     ctx.shadowBlur = 20;
-    ctx.shadowColor = color;
+    ctx.shadowColor = "#00ffff";
 
     ctx.beginPath();
     ctx.moveTo(x1,y1);
@@ -123,67 +67,69 @@ function drawGlow(x1,y1,x2,y2,color,size){
     ctx.shadowBlur = 0;
 }
 
+/* ===== HANDS ===== */
 const hands = new Hands({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
 });
 
 hands.setOptions({
-    maxNumHands: 1,
-    modelComplexity: 1,
-    minDetectionConfidence: 0.7,
-    minTrackingConfidence: 0.7
+    maxNumHands:2,
+    modelComplexity:1,
+    minDetectionConfidence:0.75,
+    minTrackingConfidence:0.75
 });
 
 hands.onResults(onResults);
 
-function onResults(results) {
-    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-        lastX = lastY = null;
-        return;
+/* ===== CORE LOGIC ===== */
+function onResults(results){
+
+    ctx.fillStyle="black";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    if(!results.multiHandLandmarks) return;
+
+    for(let i=0;i<results.multiHandLandmarks.length;i++){
+
+        const lm = results.multiHandLandmarks[i];
+        const hand = results.multiHandedness[i].label; // LEFT / RIGHT
+
+        drawConnectors(ctx,lm,HAND_CONNECTIONS,{
+            color:"#00ffff",
+            lineWidth:2
+        });
+
+        drawLandmarks(ctx,lm,{
+            color:"#ff00ff",
+            lineWidth:1
+        });
+
+        // 👉 NO MIRROR FLIP (THIS WAS MAIN BUG)
+        let x = lm[8].x * canvas.width;
+        let y = lm[8].y * canvas.height;
+
+        // 👉 stability key
+        let key = hand;
+
+        if(last[key]){
+            draw(last[key].x,last[key].y,x,y);
+        }
+
+        last[key] = {x,y};
     }
-
-    const lm = results.multiHandLandmarks[0];
-    const state = getFingerState(lm);
-
-    // USE VIDEO SIZE (FIX ACCURACY ISSUE)
-    const vw = videoElement.videoWidth || window.innerWidth;
-    const vh = videoElement.videoHeight || window.innerHeight;
-
-    let x = (1 - lm[8].x) * window.innerWidth; // mirror fix
-    let y = lm[8].y * window.innerHeight;
-
-    if (isFist(state)) {
-        drawing = false;
-        lastX = lastY = null;
-        return;
-    }
-
-    if (isOpenPalm(state)) {
-        ctx.clearRect(0,0,canvas.width,canvas.height);
-        lastX = lastY = null;
-        return;
-    }
-
-    if (!isIndexOnly(state)) return;
-
-    drawing = true;
-
-    if (lastX !== null) {
-        drawGlow(lastX,lastY,x,y,colorPicker.value,brushSize.value);
-    }
-
-    lastX = x;
-    lastY = y;
 }
 
-const camera = new Camera(videoElement, {
-    onFrame: async () => {
-        await hands.send({image: videoElement});
+/* ===== CAMERA ===== */
+const camera = new Camera(video,{
+    onFrame: async ()=>{
+        await hands.send({image:video});
     },
-    width: 640,
-    height: 480
+    width:640,
+    height:480
 });
+
 camera.start();
+
 </script>
 
 </body>
