@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Cat Cradle</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<style>
+body{
+  margin:0;
+  overflow:hidden;
+  background:black;
+}
+canvas{
+  display:block;
+}
+</style>
+</head>
+
+<body>
+
+<script>
+
+let video;
+let detectedHands = [];
+
+const tips = [4,8,12,16,20];
+
+function setup(){
+
+  createCanvas(windowWidth, windowHeight);
+
+  video = createCapture(VIDEO);
+  video.size(width,height);
+  video.hide();
+
+  setupHands();
+}
+
+function setupHands(){
+
+  const hands = new Hands({
+    locateFile:(file)=>{
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }
+  });
+
+  hands.setOptions({
+    maxNumHands:2,
+    modelComplexity:0,
+    minDetectionConfidence:0.5,
+    minTrackingConfidence:0.5
+  });
+
+  hands.onResults((results)=>{
+    detectedHands = results.multiHandLandmarks || [];
+  });
+
+  const camera = new Camera(video.elt,{
+    onFrame: async ()=>{
+      await hands.send({image:video.elt});
+    },
+    width:640,
+    height:480
+  });
+
+  camera.start();
+}
+
+function draw(){
+
+  background(0);
+
+  // mirrored camera
+  push();
+  translate(width,0);
+  scale(-1,1);
+  image(video,0,0,width,height);
+  pop();
+
+  // dark overlay
+  fill(0,120);
+  rect(0,0,width,height);
+
+  drawLandmarks();
+
+  if(detectedHands.length === 2){
+    connectHands(detectedHands[0], detectedHands[1]);
+  }
+}
+
+function drawLandmarks(){
+
+  for(let hand of detectedHands){
+
+    for(let point of hand){
+
+      let x = width - point.x * width;
+      let y = point.y * height;
+
+      noStroke();
+
+      // glow
+      for(let i=30;i>0;i-=5){
+        fill(0,255,255,10);
+        circle(x,y,i);
+      }
+
+      fill(255);
+      circle(x,y,8);
+    }
+  }
+}
+
+function connectHands(left,right){
+
+  drawingContext.shadowBlur = 25;
+  drawingContext.shadowColor = "cyan";
+
+  for(let i=0;i<tips.length;i++){
+
+    let p1 = left[tips[i]];
+    let p2 = right[tips[i]];
+
+    let x1 = width - p1.x * width;
+    let y1 = p1.y * height;
+
+    let x2 = width - p2.x * width;
+    let y2 = p2.y * height;
+
+    let d = dist(x1,y1,x2,y2);
+
+    let thick = map(d,50,700,1,8);
+
+    strokeWeight(thick);
+
+    // animated color
+    let r = map(sin(frameCount*0.03+i),-1,1,50,255);
+    let g = map(cos(frameCount*0.03+i),-1,1,100,255);
+    let b = 255;
+
+    stroke(r,g,b);
+
+    noFill();
+
+    // elastic curve
+    let midX = (x1+x2)/2 + sin(frameCount*0.05+i)*40;
+    let midY = (y1+y2)/2 + cos(frameCount*0.05+i)*40;
+
+    beginShape();
+    curveVertex(x1,y1);
+    curveVertex(x1,y1);
+    curveVertex(midX,midY);
+    curveVertex(x2,y2);
+    curveVertex(x2,y2);
+    endShape();
+
+    // particles
+    drawParticles(x1,y1,x2,y2,i);
+  }
+
+  drawingContext.shadowBlur = 0;
+}
+
+function drawParticles(x1,y1,x2,y2,seed){
+
+  for(let i=0;i<5;i++){
+
+    let t = (sin(frameCount*0.03+i+seed)+1)/2;
+
+    let px = lerp(x1,x2,t);
+    let py = lerp(y1,y2,t);
+
+    noStroke();
+    fill(255,255,255,180);
+
+    circle(px,py,4);
+  }
+}
+
+function windowResized(){
+  resizeCanvas(windowWidth, windowHeight);
+}
+
+</script>
+
+</body>
+</html>
