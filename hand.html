@@ -3,40 +3,50 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Air Drawing App</title>
+<title>Air Writing App</title>
 <style>
     body {
         margin: 0;
         overflow: hidden;
-        background: #0b0b0f;
+        background: black;
         font-family: Arial, sans-serif;
-        color: white;
+    }
+
+    /* LIVE CAMERA BACKGROUND */
+    video {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        object-fit: cover;
+        z-index: 0;
+        transform: scaleX(-1); /* mirror like mirror view */
+    }
+
+    canvas {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 1;
+        pointer-events: none;
     }
 
     #ui {
         position: fixed;
         top: 10px;
         left: 10px;
-        z-index: 10;
-        background: rgba(0,0,0,0.4);
+        z-index: 2;
+        background: rgba(0,0,0,0.5);
         padding: 10px;
         border-radius: 10px;
-        backdrop-filter: blur(8px);
+        backdrop-filter: blur(10px);
+        color: white;
     }
 
-    canvas {
-        position: absolute;
-        top: 0;
-        left: 0;
-    }
-
-    video {
-        display: none;
-    }
-
-    input {
-        margin: 5px 0;
-    }
+    input { margin: 5px 0; }
 </style>
 </head>
 <body>
@@ -46,23 +56,26 @@
     <input type="color" id="colorPicker" value="#00ffff" /><br/>
 
     <label>Brush Size:</label>
-    <input type="range" id="brushSize" min="2" max="30" value="6" />
+    <input type="range" id="brushSize" min="2" max="40" value="6" />
 </div>
 
-<video id="video" autoplay></video>
+<video id="video" autoplay playsinline></video>
 <canvas id="canvas"></canvas>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <script>
 const videoElement = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
 
 let drawing = true;
 let lastX = null;
@@ -72,21 +85,14 @@ const colorPicker = document.getElementById('colorPicker');
 const brushSize = document.getElementById('brushSize');
 
 function getFingerState(lm) {
-    // simple finger up/down detection
-    const tips = [8, 12, 16, 20];
-    const pip = [6, 10, 14, 18];
-
-    let fingers = [];
-
-    // index
-    fingers.push(lm[8].y < lm[6].y);
-    fingers.push(lm[12].y < lm[10].y);
-    fingers.push(lm[16].y < lm[14].y);
-    fingers.push(lm[20].y < lm[18].y);
-
-    const thumb = lm[4].x < lm[3].x;
-
-    return {thumb, fingers};
+    return {
+        fingers: [
+            lm[8].y < lm[6].y,
+            lm[12].y < lm[10].y,
+            lm[16].y < lm[14].y,
+            lm[20].y < lm[18].y
+        ]
+    };
 }
 
 function isFist(state) {
@@ -101,12 +107,12 @@ function isIndexOnly(state) {
     return state.fingers[0] && !state.fingers[1] && !state.fingers[2] && !state.fingers[3];
 }
 
-function drawGlowLine(x1,y1,x2,y2,color,size){
+function drawGlow(x1,y1,x2,y2,color,size){
     ctx.strokeStyle = color;
     ctx.lineWidth = size;
-    ctx.lineCap = 'round';
+    ctx.lineCap = "round";
 
-    ctx.shadowBlur = 15;
+    ctx.shadowBlur = 20;
     ctx.shadowColor = color;
 
     ctx.beginPath();
@@ -117,9 +123,9 @@ function drawGlowLine(x1,y1,x2,y2,color,size){
     ctx.shadowBlur = 0;
 }
 
-const hands = new Hands({locateFile: (file) => {
-    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-}});
+const hands = new Hands({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
 
 hands.setOptions({
     maxNumHands: 1,
@@ -132,45 +138,42 @@ hands.onResults(onResults);
 
 function onResults(results) {
     if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-        lastX = null;
-        lastY = null;
+        lastX = lastY = null;
         return;
     }
 
     const lm = results.multiHandLandmarks[0];
     const state = getFingerState(lm);
 
-    const indexTip = lm[8];
-    const x = indexTip.x * canvas.width;
-    const y = indexTip.y * canvas.height;
+    // USE VIDEO SIZE (FIX ACCURACY ISSUE)
+    const vw = videoElement.videoWidth || window.innerWidth;
+    const vh = videoElement.videoHeight || window.innerHeight;
+
+    let x = (1 - lm[8].x) * window.innerWidth; // mirror fix
+    let y = lm[8].y * window.innerHeight;
 
     if (isFist(state)) {
         drawing = false;
-        lastX = null;
-        lastY = null;
+        lastX = lastY = null;
         return;
     }
 
     if (isOpenPalm(state)) {
         ctx.clearRect(0,0,canvas.width,canvas.height);
-        lastX = null;
-        lastY = null;
+        lastX = lastY = null;
         return;
     }
 
-    if (isIndexOnly(state)) {
-        drawing = true;
-    } else {
-        return;
+    if (!isIndexOnly(state)) return;
+
+    drawing = true;
+
+    if (lastX !== null) {
+        drawGlow(lastX,lastY,x,y,colorPicker.value,brushSize.value);
     }
 
-    if (drawing) {
-        if (lastX != null && lastY != null) {
-            drawGlowLine(lastX,lastY,x,y,colorPicker.value,brushSize.value);
-        }
-        lastX = x;
-        lastY = y;
-    }
+    lastX = x;
+    lastY = y;
 }
 
 const camera = new Camera(videoElement, {
@@ -181,11 +184,6 @@ const camera = new Camera(videoElement, {
     height: 480
 });
 camera.start();
-
-window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-});
 </script>
 
 </body>
