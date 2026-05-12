@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Hand Tracked Voxel Builder</title>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<style>
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    overflow:hidden;
+    background:black;
+    font-family:Arial;
+}
+
+video{
+    position:fixed;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    transform:scaleX(-1);
+    opacity:0.2;
+    z-index:1;
+}
+
+#handCanvas{
+    position:fixed;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    z-index:5;
+    pointer-events:none;
+    transform:scaleX(-1); /* Mirror the canvas to match video */
+}
+
+#crosshair{
+    position:fixed;
+    width:20px;
+    height:20px;
+    border:2px solid cyan;
+    border-radius:50%;
+    transform:translate(-50%,-50%);
+    pointer-events:none;
+    z-index:10;
+    box-shadow:0 0 20px cyan;
+}
+
+.ui{
+    position:fixed;
+    top:20px;
+    left:20px;
+    z-index:20;
+    color:cyan;
+    background:rgba(0,0,0,0.5);
+    padding:15px;
+    border-radius:10px;
+    border:1px solid cyan;
+}
+
+.ui h1{
+    font-size:22px;
+    margin-bottom:10px;
+}
+</style>
+</head>
+
+<body>
+
+<video id="video" autoplay playsinline muted></video>
+<canvas id="handCanvas"></canvas>
+
+<div id="crosshair"></div>
+
+<div class="ui">
+    <h1>HAND VOXEL BUILDER</h1>
+    <p>Pinch = Add Block</p>
+    <p>Open Palm = Remove</p>
+</div>
+
+<script>
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("handCanvas");
+const ctx = canvas.getContext("2d");
+const crosshair = document.getElementById("crosshair");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+/////////////////////////////////////////////////////////
+// CAMERA ACCESS
+/////////////////////////////////////////////////////////
+
+async function startCamera(){
+    try{
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video:true,
+            audio:false
+        });
+        video.srcObject = stream;
+    }catch(err){
+        alert("Camera Access Denied");
+        console.log(err);
+    }
+}
+
+startCamera();
+
+/////////////////////////////////////////////////////////
+// THREE JS
+/////////////////////////////////////////////////////////
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth/window.innerHeight,
+    0.1,
+    1000
+);
+
+const renderer = new THREE.WebGLRenderer({
+    antialias:true,
+    alpha:true
+});
+
+renderer.setSize(window.innerWidth,window.innerHeight);
+renderer.domElement.style.position="fixed";
+renderer.domElement.style.top="0";
+renderer.domElement.style.left="0";
+renderer.domElement.style.zIndex="2";
+
+document.body.appendChild(renderer.domElement);
+
+camera.position.set(0,8,12);
+camera.lookAt(0,0,0);
+
+/////////////////////////////////////////////////////////
+// LIGHTS
+/////////////////////////////////////////////////////////
+
+const ambient = new THREE.AmbientLight(0xffffff,0.8);
+scene.add(ambient);
+
+const dir = new THREE.DirectionalLight(0xffffff,1);
+dir.position.set(10,20,0);
+scene.add(dir);
+
+/////////////////////////////////////////////////////////
+// GRID
+/////////////////////////////////////////////////////////
+
+const grid = new THREE.GridHelper(50,50,0x00ffff,0x003333);
+scene.add(grid);
+
+/////////////////////////////////////////////////////////
+// FLOOR
+/////////////////////////////////////////////////////////
+
+const floorGeo = new THREE.PlaneGeometry(50,50);
+const floorMat = new THREE.MeshStandardMaterial({
+    color:0x111111,
+    side:THREE.DoubleSide
+});
+const floor = new THREE.Mesh(floorGeo,floorMat);
+floor.rotation.x = -Math.PI/2;
+scene.add(floor);
+
+/////////////////////////////////////////////////////////
+// VOXELS
+/////////////////////////////////////////////////////////
+
+const voxels = [];
+
+function createVoxel(x,y,z){
+    const geo = new THREE.BoxGeometry(1,1,1);
+    const mat = new THREE.MeshStandardMaterial({
+        color:new THREE.Color(Math.random(),Math.random(),Math.random()),
+        emissive:0x111111
+    });
+    const cube = new THREE.Mesh(geo,mat);
+    cube.position.set(x,y,z);
+    scene.add(cube);
+    voxels.push(cube);
+}
+
+// Initial voxels
+for(let x=-2;x<=2;x++){
+    for(let z=-2;z<=2;z++){
+        createVoxel(x,0.5,z);
+    }
+}
+
+/////////////////////////////////////////////////////////
+// RAYCAST
+/////////////////////////////////////////////////////////
+
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+let fingerX = window.innerWidth/2;
+let fingerY = window.innerHeight/2;
+
+function updateRay(){
+    mouse.x = (fingerX/window.innerWidth)*2 -1;
+    mouse.y = -(fingerY/window.innerHeight)*2 +1;
+    raycaster.setFromCamera(mouse,camera);
+}
+
+/////////////////////////////////////////////////////////
+// HAND TRACKING
+/////////////////////////////////////////////////////////
+
+function dist(a,b){
+    return Math.sqrt(
+        Math.pow(a.x-b.x,2)+
+        Math.pow(a.y-b.y,2)
+    );
+}
+
+let canPlace = true;
+let removeMode = false;
+
+function onResults(results){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    if(results.multiHandLandmarks.length > 0){
+        const landmarks = results.multiHandLandmarks[0];
+
+        drawConnectors(ctx,landmarks,HAND_CONNECTIONS,{
+            color:"#00ffff",
+            lineWidth:3
+        });
+
+        drawLandmarks(ctx,landmarks,{
+            color:"#00ffee",
+            radius:5
+        });
+
+        /////////////////////////////////////////////////////
+        // INDEX FINGER - Fixed mirroring
+        /////////////////////////////////////////////////////
+        const indexTip = landmarks[8];
+        
+        // FIX: When canvas is mirrored with scaleX(-1), 
+        // we need to draw at original x but crosshair should follow mirrored position
+        // Canvas drawing is already mirrored, so crosshair needs original coordinates
+        fingerX = (1 - indexTip.x) * window.innerWidth; // Mirror only for 3D interaction
+        fingerY = indexTip.y * window.innerHeight;
+        
+        // Crosshair follows the actual finger position (mirrored)
+        crosshair.style.left = fingerX + "px";
+        crosshair.style.top = fingerY + "px";
+
+        /////////////////////////////////////////////////////
+        // PINCH DETECTION
+        /////////////////////////////////////////////////////
+        const thumbTip = landmarks[4];
+        const pinch = dist(indexTip,thumbTip);
+
+        /////////////////////////////////////////////////////
+        // OPEN PALM DETECTION
+        /////////////////////////////////////////////////////
+        const openPalm =
+            landmarks[8].y < landmarks[6].y &&
+            landmarks[12].y < landmarks[10].y &&
+            landmarks[16].y < landmarks[14].y &&
+            landmarks[20].y < landmarks[18].y;
+
+        removeMode = openPalm;
+
+        /////////////////////////////////////////////////////
+        // PLACE / REMOVE
+        /////////////////////////////////////////////////////
+        if(pinch < 0.05 && canPlace){
+            interact();
+            canPlace = false;
+            setTimeout(()=>{
+                canPlace = true;
+            },300);
+        }
+    }
+}
+
+/////////////////////////////////////////////////////////
+// INTERACTION
+/////////////////////////////////////////////////////////
+
+function interact(){
+    updateRay();
+    const hits = raycaster.intersectObjects(voxels);
+
+    if(hits.length > 0){
+        const hit = hits[0];
+
+        // REMOVE
+        if(removeMode){
+            scene.remove(hit.object);
+            const index = voxels.indexOf(hit.object);
+            if(index > -1){
+                voxels.splice(index,1);
+            }
+            return;
+        }
+
+        // ADD
+        const normal = hit.face.normal.clone();
+        const pos = hit.object.position.clone();
+        pos.add(normal);
+        
+        createVoxel(
+            Math.round(pos.x),
+            Math.round(pos.y),
+            Math.round(pos.z)
+        );
+    }
+}
+
+/////////////////////////////////////////////////////////
+// MEDIAPIPE SETUP
+/////////////////////////////////////////////////////////
+
+const hands = new Hands({
+    locateFile:(file)=>{
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }
+});
+
+hands.setOptions({
+    maxNumHands:1,
+    modelComplexity:1,
+    minDetectionConfidence:0.7,
+    minTrackingConfidence:0.7
+});
+
+hands.onResults(onResults);
+
+/////////////////////////////////////////////////////////
+// CAMERA FEED
+/////////////////////////////////////////////////////////
+
+const cam = new Camera(video,{
+    onFrame: async ()=>{
+        await hands.send({
+            image:video
+        });
+    },
+    width:1280,
+    height:720
+});
+
+cam.start();
+
+/////////////////////////////////////////////////////////
+// ANIMATE
+/////////////////////////////////////////////////////////
+
+function animate(){
+    requestAnimationFrame(animate);
+    scene.rotation.y += 0.001;
+    renderer.render(scene,camera);
+}
+
+animate();
+
+/////////////////////////////////////////////////////////
+// RESIZE
+/////////////////////////////////////////////////////////
+
+window.addEventListener("resize",()=>{
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth,window.innerHeight);
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+});
+
+</script>
+
+</body>
+</html>
