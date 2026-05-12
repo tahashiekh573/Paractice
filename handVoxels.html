@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Hand-Tracked Voxel Builder | MediaPipe + Three.js</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    #permission-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      backdrop-filter: blur(5px);
+    }
+    
+    #permission-box {
+      background: #1e1e2f;
+      padding: 40px;
+      border-radius: 20px;
+      text-align: center;
+      color: white;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      border: 1px solid #444;
+    }
+    
+    #permission-box h2 {
+      margin-bottom: 15px;
+      color: #ffaa00;
+    }
+    
+    #start-camera-btn {
+      background: #ff6b35;
+      color: white;
+      border: none;
+      padding: 15px 40px;
+      font-size: 18px;
+      border-radius: 50px;
+      cursor: pointer;
+      margin-top: 20px;
+      transition: all 0.3s;
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+    
+    #start-camera-btn:hover {
+      background: #ff8c5a;
+      transform: scale(1.05);
+      box-shadow: 0 5px 20px rgba(255,107,53,0.5);
+    }
+    
+    #info {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 12px 25px;
+      border-radius: 40px;
+      backdrop-filter: blur(10px);
+      pointer-events: none;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      flex-wrap: wrap;
+    }
+    
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .led {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ff4444;
+      box-shadow: 0 0 10px #ff4444;
+    }
+    
+    .led.active {
+      background: #00ff88;
+      box-shadow: 0 0 15px #00ff88;
+    }
+    
+    #voxel-count {
+      font-weight: bold;
+      color: #ffaa00;
+      margin-left: 5px;
+    }
+    
+    .controls-hint {
+      position: absolute;
+      bottom: 25px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(10px);
+      color: #ddd;
+      padding: 12px 28px;
+      border-radius: 50px;
+      font-size: 16px;
+      letter-spacing: 1px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      display: flex;
+      gap: 40px;
+      flex-wrap: wrap;
+      justify-content: center;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    
+    .hint-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .key-icon {
+      background: #333;
+      padding: 4px 12px;
+      border-radius: 8px;
+      font-weight: bold;
+      color: #ffaa00;
+      border: 1px solid #555;
+    }
+    
+    @media (max-width: 700px) {
+      .controls-hint {
+        flex-direction: column;
+        gap: 10px;
+        bottom: 15px;
+        padding: 12px 20px;
+        font-size: 14px;
+      }
+      #info {
+        top: 10px;
+        padding: 8px 18px;
+        font-size: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="permission-overlay">
+    <div id="permission-box">
+      <h2>🎥 Camera Permission Required</h2>
+      <p>This app needs camera access for hand tracking.<br>Please allow camera when prompted.</p>
+      <button id="start-camera-btn">🚀 Start Camera & Enter</button>
+      <p style="font-size:12px; color:#888; margin-top:15px;">Make sure your camera is connected and not blocked</p>
+    </div>
+  </div>
+
+  <div id="info">
+    <div class="status">
+      <span class="led" id="hand-led"></span>
+      <span id="hand-status">Hand: Waiting...</span>
+    </div>
+    <div>
+      🧱 Voxels: <span id="voxel-count">0</span>
+    </div>
+  </div>
+
+  <div class="controls-hint">
+    <div class="hint-item"><span class="key-icon">☝️ INDEX</span> Point to aim</div>
+    <div class="hint-item"><span class="key-icon">🤏 PINCH</span> Place block</div>
+    <div class="hint-item"><span class="key-icon">R</span> Reset world</div>
+    <div class="hint-item"><span class="key-icon">🖱️ DRAG</span> Rotate view</div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.150.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.150.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ============ DOM ELEMENTS ============
+    const handLed = document.getElementById('hand-led');
+    const handStatus = document.getElementById('hand-status');
+    const voxelCountSpan = document.getElementById('voxel-count');
+    const permissionOverlay = document.getElementById('permission-overlay');
+    const startCameraBtn = document.getElementById('start-camera-btn');
+
+    // ============ THREE.JS SETUP ============
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+    
+    // Grid
+    const gridHelper = new THREE.GridHelper(6, 20, 0x335577, 0x224466);
+    gridHelper.position.y = -1.5;
+    scene.add(gridHelper);
+    
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0x404066);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    dirLight.position.set(1, 2, 1);
+    dirLight.castShadow = true;
+    dirLight.receiveShadow = true;
+    scene.add(dirLight);
+    
+    // Stars background
+    const starsGeometry = new THREE.BufferGeometry();
+    const starsCount = 400;
+    const starsPositions = new Float32Array(starsCount * 3);
+    for (let i = 0; i < starsCount * 3; i += 3) {
+      starsPositions[i] = (Math.random() - 0.5) * 15;
+      starsPositions[i+1] = (Math.random() * 8) + 1;
+      starsPositions[i+2] = (Math.random() - 0.5) * 12;
+    }
+    starsGeometry.setAttribute('position', new THREE.BufferAttribute(starsPositions, 3));
+    const starsMaterial = new THREE.PointsMaterial({color: 0xaaccff, size: 0.03});
+    const stars = new THREE.Points(starsGeometry, starsMaterial);
+    scene.add(stars);
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(3, 2.5, 4);
+    camera.lookAt(0, 0.5, 0);
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    // Controls
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.target.set(0, 0.5, 0);
+    controls.update();
+    controls.maxPolarAngle = Math.PI;
+    controls.minDistance = 1.5;
+    controls.maxDistance = 8;
+
+    // ============ VOXEL SYSTEM ============
+    const voxelGroup = new THREE.Group();
+    scene.add(voxelGroup);
+    
+    const voxelSize = 0.22;
+    const voxelGeometry = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
+    const occupiedPositions = new Set();
+    
+    function getPositionKey(x, y, z) {
+      return `${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}`;
+    }
+    
+    function addVoxel(position) {
+      const snappedX = Math.round(position.x / voxelSize) * voxelSize;
+      const snappedY = Math.round(position.y / voxelSize) * voxelSize;
+      const snappedZ = Math.round(position.z / voxelSize) * voxelSize;
+      
+      const key = getPositionKey(snappedX, snappedY, snappedZ);
+      if (occupiedPositions.has(key)) return false;
+      
+      const hue = Math.random();
+      const color = new THREE.Color().setHSL(hue, 0.8, 0.6);
+      
+      const material = new THREE.MeshStandardMaterial({ 
+        color: color,
+        roughness: 0.3,
+        metalness: 0.1,
+      });
+      
+      const voxel = new THREE.Mesh(voxelGeometry, material);
+      voxel.position.set(snappedX, snappedY, snappedZ);
+      voxel.castShadow = true;
+      voxel.receiveShadow = true;
+      
+      // Wireframe edge
+      const edges = new THREE.EdgesGeometry(voxelGeometry);
+      const wireframe = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
+      voxel.add(wireframe);
+      
+      voxelGroup.add(voxel);
+      occupiedPositions.add(key);
+      updateVoxelCount();
+      return true;
+    }
+    
+    function resetWorld() {
+      while(voxelGroup.children.length > 0) {
+        voxelGroup.remove(voxelGroup.children[0]);
+      }
+      occupiedPositions.clear();
+      updateVoxelCount();
+    }
+    
+    function updateVoxelCount() {
+      voxelCountSpan.textContent = voxelGroup.children.length;
+    }
+
+    // ============ CURSOR SPHERE ============
+    const cursorGeometry = new THREE.SphereGeometry(0.08, 16, 16);
+    const cursorMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xff5500, 
+      emissive: new THREE.Color(0x331100),
+      roughness: 0.3
+    });
+    const cursorSphere = new THREE.Mesh(cursorGeometry, cursorMaterial);
+    cursorSphere.visible = false;
+    scene.add(cursorSphere);
+
+    // ============ MEDIAPIPE HAND TRACKING ============
+    let handLandmarks = null;
+    let isHandPresent = false;
+    let lastPlacementTime = 0;
+    const PLACEMENT_COOLDOWN = 300;
+    
+    const INDEX_TIP = 8;
+    const THUMB_TIP = 4;
+    
+    function isPinching(landmarks) {
+      if (!landmarks) return false;
+      const indexTip = landmarks[INDEX_TIP];
+      const thumbTip = landmarks[THUMB_TIP];
+      if (!indexTip || !thumbTip) return false;
+      
+      const dx = indexTip.x - thumbTip.x;
+      const dy = indexTip.y - thumbTip.y;
+      const dz = indexTip.z - thumbTip.z;
+      const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      
+      return distance < 0.05;
+    }
+    
+    function mediaPipeToWorld(landmark) {
+      const scale = 4.5;
+      const offsetX = -0.2;
+      const offsetY = 0.8;
+      const offsetZ = -0.5;
+      
+      const worldX = (landmark.x - 0.5) * scale + offsetX;
+      const worldY = (0.5 - landmark.y) * scale + offsetY;
+      const worldZ = (landmark.z * -1) * scale + offsetZ;
+      
+      return new THREE.Vector3(worldX, worldY, worldZ);
+    }
+
+    // ============ SETUP MEDIAPIPE ============
+    let handsInstance = null;
+    let videoElement = null;
+    let cameraStream = null;
+
+    async function setupMediaPipe() {
+      try {
+        // Dynamically import MediaPipe
+        const { Hands } = await import('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js');
+        
+        videoElement = document.createElement('video');
+        videoElement.setAttribute('playsinline', '');
+        videoElement.setAttribute('autoplay', '');
+        videoElement.style.display = 'none';
+        document.body.appendChild(videoElement);
+        
+        handsInstance = new Hands({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
+        });
+        
+        handsInstance.setOptions({
+          maxNumHands: 1,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.7,
+          minTrackingConfidence: 0.6
+        });
+        
+        handsInstance.onResults((results) => {
+          if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            handLandmarks = results.multiHandLandmarks[0];
+            isHandPresent = true;
+            handLed.classList.add('active');
+            handStatus.textContent = 'Hand: Tracking';
+          } else {
+            handLandmarks = null;
+            isHandPresent = false;
+            handLed.classList.remove('active');
+            handStatus.textContent = 'Hand: Lost';
+            cursorSphere.visible = false;
+          }
+        });
+        
+        // Get camera stream
+        cameraStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: 'user' 
+          } 
+        });
+        
+        videoElement.srcObject = cameraStream;
+        await videoElement.play();
+        
+        // Process frames
+        async function processFrame() {
+          if (!videoElement || !handsInstance) return;
+          if (videoElement.readyState >= 2) {
+            await handsInstance.send({ image: videoElement });
+          }
+          requestAnimationFrame(processFrame);
+        }
+        processFrame();
+        
+        console.log('✅ MediaPipe Hands started successfully');
+        handStatus.textContent = 'Hand: Ready';
+        return true;
+      } catch (error) {
+        console.error('❌ MediaPipe setup error:', error);
+        handStatus.textContent = 'Hand: Camera Error';
+        handLed.classList.remove('active');
+        return false;
+      }
+    }
+
+    // ============ ANIMATION LOOP ============
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      if (isHandPresent && handLandmarks) {
+        const indexTip = handLandmarks[INDEX_TIP];
+        if (indexTip) {
+          const worldPos = mediaPipeToWorld(indexTip);
+          cursorSphere.position.copy(worldPos);
+          cursorSphere.visible = true;
+          
+          const pinch = isPinching(handLandmarks);
+          
+          if (pinch) {
+            const now = Date.now();
+            if (now - lastPlacementTime > PLACEMENT_COOLDOWN) {
+              addVoxel(worldPos);
+              lastPlacementTime = now;
+              // Visual feedback
+              cursorSphere.material.emissive.set(0x442200);
+              setTimeout(() => {
+                if (cursorSphere) cursorSphere.material.emissive.set(0x331100);
+              }, 150);
+            }
+          } else {
+            cursorSphere.material.emissive.set(0x331100);
+          }
+        }
+      } else {
+        cursorSphere.visible = false;
+      }
+      
+      stars.rotation.y += 0.0002;
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // ============ EVENT LISTENERS ============
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        resetWorld();
+      }
+    });
+    
+    renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+    // ============ START BUTTON ============
+    startCameraBtn.addEventListener('click', async () => {
+      startCameraBtn.textContent = '⏳ Starting Camera...';
+      startCameraBtn.disabled = true;
+      
+      const success = await setupMediaPipe();
+      
+      if (success) {
+        permissionOverlay.style.display = 'none';
+      } else {
+        startCameraBtn.textContent = '❌ Failed - Try Again';
+        startCameraBtn.disabled = false;
+        // Show error message
+        const errorMsg = document.createElement('p');
+        errorMsg.style.color = '#ff4444';
+        errorMsg.style.marginTop = '10px';
+        errorMsg.textContent = 'Camera access denied or not available. Please check permissions and reload.';
+        const box = document.getElementById('permission-box');
+        if (!box.querySelector('.error-msg')) {
+          errorMsg.className = 'error-msg';
+          box.appendChild(errorMsg);
+        }
+      }
+    });
+
+    // ============ INITIAL START ============
+    animate();
+    resetWorld();
+    updateVoxelCount();
+    
+    console.log('🚀 App initialized. Click "Start Camera" to begin hand tracking.');
+  </script>
+</body>
+</html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hand Tracked Voxel Builder</title>
+
+  <link rel="stylesheet" href="style.css" />
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+</head>
+<body>
+
+  <video id="video" autoplay playsinline></video>
+  <canvas id="handCanvas"></canvas>
+
+  <div id="crosshair"></div>
+
+  <div class="ui">
+    <h1>HAND VOXEL BUILDER</h1>
+    <p>Pinch fingers = Place Block</p>
+    <p>Open Palm = Remove Mode</p>
+    <p>Move Finger = Aim</p>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

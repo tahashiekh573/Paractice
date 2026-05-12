@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Write with Finger - Fixed</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; }
+    
+    video { 
+      position: fixed; 
+      width: 100%; 
+      height: 100%; 
+      object-fit: cover;
+      transform: scaleX(-1);
+      opacity: 0.5;
+      z-index: 1;
+    }
+    
+    #writeCanvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+    }
+    
+    #fingerDot {
+      position: fixed;
+      width: 20px;
+      height: 20px;
+      background: #00ffff;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 10;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 30px #00ffff, 0 0 60px #00ffff;
+      display: none;
+    }
+    
+    #status {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.9);
+      color: white;
+      padding: 15px 30px;
+      border-radius: 30px;
+      z-index: 20;
+      text-align: center;
+      border: 2px solid #00ffff;
+      font-family: Arial;
+    }
+    
+    #status h3 { margin: 0; color: #00ffff; }
+    #status p { margin: 5px 0 0; font-size: 14px; }
+    
+    #colors {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 20;
+      background: rgba(0,0,0,0.9);
+      padding: 15px;
+      border-radius: 30px;
+      border: 2px solid #00ffff;
+    }
+    
+    .color {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 3px solid rgba(255,255,255,0.5);
+      transition: 0.3s;
+    }
+    
+    .color.active { 
+      border-color: #fff; 
+      transform: scale(1.3);
+      box-shadow: 0 0 30px currentColor;
+    }
+    
+    #clearBtn {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #ff0000;
+      color: white;
+      border: none;
+      padding: 12px 25px;
+      border-radius: 25px;
+      font-size: 16px;
+      cursor: pointer;
+      z-index: 20;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted></video>
+<canvas id="writeCanvas"></canvas>
+<div id="fingerDot"></div>
+
+<div id="status">
+  <h3>✍️ WRITE YOUR NAME</h3>
+  <p id="mode">☝️ Point finger to write | 🤏 Pinch = Lift pen | ✋ Palm = Clear</p>
+</div>
+
+<div id="colors">
+  <div class="color active" style="background: #00ffff;" data-color="#00ffff"></div>
+  <div class="color" style="background: #ff00ff;" data-color="#ff00ff"></div>
+  <div class="color" style="background: #ffff00;" data-color="#ffff00"></div>
+  <div class="color" style="background: #00ff00;" data-color="#00ff00"></div>
+  <div class="color" style="background: #ff6600;" data-color="#ff6600"></div>
+  <div class="color" style="background: #ff0000;" data-color="#ff0000"></div>
+  <div class="color" style="background: #ffffff;" data-color="#ffffff"></div>
+</div>
+
+<button id="clearBtn">🗑️ CLEAR</button>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('writeCanvas');
+const ctx = canvas.getContext('2d');
+const fingerDot = document.getElementById('fingerDot');
+const modeText = document.getElementById('mode');
+
+// Canvas size
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+
+// Permanent drawing layer
+const drawing = document.createElement('canvas');
+const drawCtx = drawing.getContext('2d');
+drawing.width = canvas.width;
+drawing.height = canvas.height;
+
+// State
+let lastX = -1, lastY = -1;
+let isWriting = false;
+let currentColor = '#00ffff';
+
+// Color selection
+document.querySelectorAll('.color').forEach(c => {
+  c.onclick = () => {
+    document.querySelectorAll('.color').forEach(x => x.classList.remove('active'));
+    c.classList.add('active');
+    currentColor = c.dataset.color;
+    fingerDot.style.background = currentColor;
+    fingerDot.style.boxShadow = `0 0 30px ${currentColor}, 0 0 60px ${currentColor}`;
+  };
+});
+
+// Clear
+document.getElementById('clearBtn').onclick = () => {
+  drawCtx.clearRect(0, 0, drawing.width, drawing.height);
+  lastX = -1;
+  lastY = -1;
+};
+
+// Gestures
+function isPinch(hand) {
+  const d = Math.hypot(hand[4].x - hand[8].x, hand[4].y - hand[8].y);
+  return d < 0.04;
+}
+
+function isPalm(hand) {
+  return hand[8].y < hand[6].y && hand[12].y < hand[10].y && 
+         hand[16].y < hand[14].y && hand[20].y < hand[18].y;
+}
+
+// Draw function
+function draw(x, y) {
+  if (lastX < 0 || lastY < 0) {
+    lastX = x;
+    lastY = y;
+    return;
+  }
+  
+  const dist = Math.hypot(x - lastX, y - lastY);
+  if (dist < 1) return;
+  
+  drawCtx.beginPath();
+  drawCtx.moveTo(lastX, lastY);
+  drawCtx.lineTo(x, y);
+  drawCtx.strokeStyle = currentColor;
+  drawCtx.lineWidth = 6;
+  drawCtx.lineCap = 'round';
+  drawCtx.lineJoin = 'round';
+  drawCtx.shadowBlur = 25;
+  drawCtx.shadowColor = currentColor;
+  drawCtx.stroke();
+  
+  // White glow core
+  drawCtx.beginPath();
+  drawCtx.moveTo(lastX, lastY);
+  drawCtx.lineTo(x, y);
+  drawCtx.strokeStyle = 'rgba(255,255,255,0.9)';
+  drawCtx.lineWidth = 2;
+  drawCtx.shadowBlur = 10;
+  drawCtx.shadowColor = 'white';
+  drawCtx.stroke();
+  
+  lastX = x;
+  lastY = y;
+}
+
+// MediaPipe
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.7
+});
+
+hands.onResults((results) => {
+  // Clear canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Show drawing
+  ctx.drawImage(drawing, 0, 0);
+  
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    fingerDot.style.display = 'none';
+    isWriting = false;
+    lastX = -1;
+    lastY = -1;
+    modeText.textContent = '🔍 No hand detected';
+    return;
+  }
+  
+  const hand = results.multiHandLandmarks[0];
+  
+  // Draw hand skeleton
+  if (window.drawConnectors) {
+    drawConnectors(ctx, hand, HAND_CONNECTIONS, {color: '#00ffff', lineWidth: 2});
+    drawLandmarks(ctx, hand, {color: '#00ffff', lineWidth: 1, radius: 3});
+  }
+  
+  // Get finger position
+  const finger = hand[8];
+  
+  // Map to screen coordinates
+  const screenX = finger.x * canvas.width;
+  const screenY = finger.y * canvas.height;
+  
+  // Show dot at finger position
+  fingerDot.style.display = 'block';
+  fingerDot.style.left = screenX + 'px';
+  fingerDot.style.top = screenY + 'px';
+  
+  // Check gestures
+  if (isPalm(hand)) {
+    drawCtx.clearRect(0, 0, drawing.width, drawing.height);
+    isWriting = false;
+    lastX = -1;
+    lastY = -1;
+    modeText.textContent = '🗑️ Screen cleared!';
+    fingerDot.style.background = '#ff0000';
+    fingerDot.style.boxShadow = '0 0 30px #ff0000, 0 0 60px #ff0000';
+    return;
+  }
+  
+  if (isPinch(hand)) {
+    isWriting = false;
+    lastX = -1;
+    lastY = -1;
+    modeText.textContent = '✋ Pen lifted - Ready to write';
+    fingerDot.style.background = '#ffff00';
+    fingerDot.style.boxShadow = '0 0 30px #ffff00, 0 0 60px #ffff00';
+    return;
+  }
+  
+  // Writing mode
+  modeText.textContent = '✍️ Writing...';
+  fingerDot.style.background = currentColor;
+  fingerDot.style.boxShadow = `0 0 30px ${currentColor}, 0 0 60px ${currentColor}`;
+  
+  if (!isWriting) {
+    lastX = screenX;
+    lastY = screenY;
+    isWriting = true;
+  } else {
+    draw(screenX, screenY);
+  }
+});
+
+// Camera
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, facingMode: 'user' }
+    });
+    video.srcObject = stream;
+    
+    const camera = new Camera(video, {
+      onFrame: async () => {
+        await hands.send({ image: video });
+      },
+      width: 640,
+      height: 480
+    });
+    camera.start();
+  } catch (e) {
+    alert('Camera error: ' + e.message);
+  }
+}
+
+window.onresize = () => {
+  const img = drawCtx.getImageData(0, 0, drawing.width, drawing.height);
+  resize();
+  drawing.width = canvas.width;
+  drawing.height = canvas.height;
+  drawCtx.putImageData(img, 0, 0);
+  lastX = -1;
+  lastY = -1;
+};
+
+startCamera();
+</script>
+</body>
+</html>

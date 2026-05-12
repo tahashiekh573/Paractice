@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Hand Tracking System</title>
+
+<style>
+body {
+  margin: 0;
+  overflow: hidden;
+  background: black;
+}
+
+video {
+  position: absolute;
+  width: 100vw;
+  height: 100vh;
+  transform: scaleX(-1);
+  object-fit: cover;
+}
+
+canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: scaleX(-1);
+}
+
+#status {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  color: white;
+  background: rgba(0,0,0,0.6);
+  padding: 10px;
+  border-radius: 8px;
+  font-family: Arial;
+}
+</style>
+</head>
+
+<body>
+
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+<div id="status">Starting...</div>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const status = document.getElementById("status");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let lastX = 0;
+let lastY = 0;
+
+// ================= HANDS =================
+const hands = new Hands({
+  locateFile: (file) =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.7
+});
+
+// ================= LOGIC =================
+function detectGesture(lm) {
+  const index = lm[8].y < lm[6].y;
+  const middle = lm[12].y < lm[10].y;
+  const ring = lm[16].y < lm[14].y;
+  const pinky = lm[20].y < lm[18].y;
+
+  const count = [index, middle, ring, pinky].filter(Boolean).length;
+
+  if (count === 0) return "fist";
+  if (count === 4) return "palm";
+  if (index && !middle && !ring && !pinky) return "draw";
+
+  return "idle";
+}
+
+// ================= DRAW =================
+function drawLine(x1, y1, x2, y2) {
+  ctx.strokeStyle = "cyan";
+  ctx.shadowColor = "cyan";
+  ctx.shadowBlur = 20;
+  ctx.lineWidth = 4;
+
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+
+// ================= RESULTS =================
+hands.onResults((results) => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    status.innerText = "No hand detected";
+    return;
+  }
+
+  const lm = results.multiHandLandmarks[0];
+
+  const gesture = detectGesture(lm);
+
+  const x = lm[8].x * canvas.width;
+  const y = lm[8].y * canvas.height;
+
+  status.innerText = "Gesture: " + gesture;
+
+  // draw landmarks
+  for (let i = 0; i < lm.length; i++) {
+    ctx.fillStyle = "white";
+    ctx.beginPath();
+    ctx.arc(lm[i].x * canvas.width, lm[i].y * canvas.height, 4, 0, 2*Math.PI);
+    ctx.fill();
+  }
+
+  // gesture actions
+  if (gesture === "fist") {
+    lastX = 0;
+    lastY = 0;
+    return;
+  }
+
+  if (gesture === "palm") {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    lastX = 0;
+    lastY = 0;
+    return;
+  }
+
+  if (gesture === "draw") {
+    if (lastX !== 0 && lastY !== 0) {
+      drawLine(lastX, lastY, x, y);
+    }
+    lastX = x;
+    lastY = y;
+  } else {
+    lastX = 0;
+    lastY = 0;
+  }
+});
+
+// ================= CAMERA FIX =================
+const camera = new Camera(video, {
+  onFrame: async () => {
+    await hands.send({ image: video });
+  },
+  width: 1280,
+  height: 720
+});
+
+camera.start();
+
+status.innerText = "Camera + Hand Tracking Running ✔";
+</script>
+
+</body>
+</html>
