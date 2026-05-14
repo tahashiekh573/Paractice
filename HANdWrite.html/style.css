@@ -75,10 +75,12 @@ html,body {
 
 .loader-logo {
     width: 160px;
+    border-radius: 16px;
     height: auto;
     opacity: .9;
     filter: drop-shadow(0 0 12px rgba(255,255,255,.06));
     animation: logo-breathe 3s ease-in-out infinite
+   
 }
 
 @keyframes logo-breathe {
@@ -484,7 +486,8 @@ input[type=range]::-moz-range-thumb {
 .onboarding-logo {
     height: 60px;
     margin-bottom: 24px;
-    opacity: .9
+    opacity: .9;
+    border-radius: 16px;
 }
 
 .onboarding-title {

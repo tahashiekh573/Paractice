@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Hand Mouse Control</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<style>
+html,body{
+margin:0;
+overflow:hidden;
+background:#050816;
+}
+
+video{
+display:none;
+}
+
+#cursor{
+position:fixed;
+width:20px;
+height:20px;
+border-radius:50%;
+background:#00ffff;
+box-shadow:0 0 20px cyan;
+transform:translate(-50%,-50%);
+pointer-events:none;
+z-index:10;
+}
+
+#status{
+position:fixed;
+top:10px;
+left:10px;
+color:#00ffff;
+font-family:Arial;
+z-index:20;
+}
+</style>
+</head>
+
+<body>
+
+<div id="status">Loading...</div>
+<div id="cursor"></div>
+<video class="input_video"></video>
+
+<script>
+
+let videoElement = document.querySelector(".input_video");
+
+let resultsLandmarks = [];
+
+let cursorX = window.innerWidth/2;
+let cursorY = window.innerHeight/2;
+
+const hands = new Hands({
+locateFile: (file) => {
+return "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file;
+}
+});
+
+hands.setOptions({
+maxNumHands: 1,
+modelComplexity: 1,
+minDetectionConfidence: 0.7,
+minTrackingConfidence: 0.7
+});
+
+hands.onResults((results) => {
+resultsLandmarks = results.multiHandLandmarks || [];
+});
+
+const camera = new Camera(videoElement, {
+onFrame: async () => {
+await hands.send({ image: videoElement });
+},
+width: 640,
+height: 480
+});
+
+camera.start().then(() => {
+document.getElementById("status").innerText = "Hand Tracking Active";
+});
+
+function setup(){
+createCanvas(windowWidth, windowHeight);
+}
+
+function draw(){
+background(5,8,22);
+
+if(resultsLandmarks.length > 0){
+let hand = resultsLandmarks[0];
+
+// INDEX FINGER TIP
+let index = hand[8];
+let thumb = hand[4];
+
+// convert coords
+let x = (1 - index.x) * windowWidth;
+let y = index.y * windowHeight;
+
+// smooth movement
+cursorX = lerp(cursorX, x, 0.35);
+cursorY = lerp(cursorY, y, 0.35);
+
+// CLICK DETECTION
+let d = dist(index.x, index.y, thumb.x, thumb.y);
+
+if(d < 0.05){
+document.getElementById("status").innerText = "CLICK";
+document.getElementById("cursor").style.background = "#ff0055";
+}
+else{
+document.getElementById("status").innerText = "MOVE";
+document.getElementById("cursor").style.background = "#00ffff";
+}
+}
+
+drawCursor();
+}
+
+function drawCursor(){
+let c = document.getElementById("cursor");
+c.style.left = cursorX + "px";
+c.style.top = cursorY + "px";
+}
+
+function windowResized(){
+resizeCanvas(windowWidth, windowHeight);
+}
+
+</script>
+
+</body>
+</html>

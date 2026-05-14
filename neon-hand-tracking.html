@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<title>Neon Cat's Cradle Hand Tracking</title>
+
+<style>
+    *{
+        margin:0;
+        padding:0;
+        box-sizing:border-box;
+    }
+
+    body{
+        overflow:hidden;
+        background:#020617;
+        font-family:Arial, sans-serif;
+    }
+
+    canvas{
+        position:absolute;
+        top:0;
+        left:0;
+        z-index:2;
+    }
+
+    video{
+        position:absolute;
+        top:0;
+        left:0;
+        width:100vw;
+        height:100vh;
+        object-fit:cover;
+        transform:scaleX(-1);
+        opacity:0.18;
+        z-index:1;
+    }
+
+    .overlay{
+        position:absolute;
+        inset:0;
+        pointer-events:none;
+        z-index:3;
+        background:
+        repeating-linear-gradient(
+            to bottom,
+            rgba(255,255,255,0.02) 0px,
+            rgba(255,255,255,0.02) 1px,
+            transparent 2px,
+            transparent 4px
+        );
+        mix-blend-mode:soft-light;
+    }
+
+    .title{
+        position:absolute;
+        top:15px;
+        left:20px;
+        color:#7dd3fc;
+        z-index:10;
+        font-size:18px;
+        letter-spacing:2px;
+        text-shadow:0 0 10px cyan;
+    }
+</style>
+</head>
+
+<body>
+
+<div class="title">NEON CAT'S CRADLE</div>
+
+<video id="video" autoplay playsinline></video>
+<div class="overlay"></div>
+
+<!-- p5.js -->
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script>
+
+const videoElement = document.getElementById("video");
+
+let handsData = [];
+let particles = [];
+
+const fingertipIndices = [4, 8, 12, 16, 20];
+
+async function setupCamera() {
+    const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+            width: 1280,
+            height: 720
+        },
+        audio: false
+    });
+
+    videoElement.srcObject = stream;
+}
+
+setupCamera();
+
+const hands = new Hands({
+    locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }
+});
+
+hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7
+});
+
+hands.onResults((results) => {
+    handsData = results.multiHandLandmarks || [];
+});
+
+const camera = new Camera(videoElement, {
+    onFrame: async () => {
+        await hands.send({ image: videoElement });
+    },
+    width: 1280,
+    height: 720
+});
+
+camera.start();
+
+new p5((p) => {
+
+    p.setup = () => {
+        p.createCanvas(window.innerWidth, window.innerHeight);
+    };
+
+    p.windowResized = () => {
+        p.resizeCanvas(window.innerWidth, window.innerHeight);
+    };
+
+    function drawGlowLine(x1, y1, x2, y2, distAmount) {
+
+        const thickness = p.map(distAmount, 0, 500, 5, 1);
+
+        const grad = p.drawingContext.createLinearGradient(x1, y1, x2, y2);
+
+        grad.addColorStop(0, "#00ffff");
+        grad.addColorStop(0.5, "#ff00ff");
+        grad.addColorStop(1, "#ffff00");
+
+        p.drawingContext.strokeStyle = grad;
+        p.drawingContext.shadowBlur = 25;
+        p.drawingContext.shadowColor = "#00ffff";
+
+        p.strokeWeight(thickness);
+
+        p.line(x1, y1, x2, y2);
+
+        // elastic extra lines
+        p.strokeWeight(thickness * 0.4);
+        p.line(
+            x1 + p.random(-3,3),
+            y1 + p.random(-3,3),
+            x2 + p.random(-3,3),
+            y2 + p.random(-3,3)
+        );
+    }
+
+    function drawLandmark(x, y, size, color) {
+
+        p.noStroke();
+
+        p.drawingContext.shadowBlur = 25;
+        p.drawingContext.shadowColor = color;
+
+        p.fill(color);
+
+        p.circle(x, y, size);
+    }
+
+    function spawnParticles(x, y) {
+
+        for(let i=0;i<15;i++){
+            particles.push({
+                x,
+                y,
+                vx:p.random(-4,4),
+                vy:p.random(-4,4),
+                life:255
+            });
+        }
+    }
+
+    function updateParticles(){
+
+        for(let i=particles.length-1;i>=0;i--){
+
+            const part = particles[i];
+
+            part.x += part.vx;
+            part.y += part.vy;
+            part.life -= 6;
+
+            p.noStroke();
+
+            p.fill(0,255,255,part.life);
+
+            p.drawingContext.shadowBlur = 20;
+            p.drawingContext.shadowColor = "#00ffff";
+
+            p.circle(part.x, part.y, 4);
+
+            if(part.life <= 0){
+                particles.splice(i,1);
+            }
+        }
+    }
+
+    p.draw = () => {
+
+        p.clear();
+
+        // futuristic dark overlay
+        p.background(2, 6, 23, 40);
+
+        updateParticles();
+
+        if(handsData.length === 0) return;
+
+        let leftHand = null;
+        let rightHand = null;
+
+        // detect hands
+        if(handsData.length === 1){
+            leftHand = handsData[0];
+        }
+
+        if(handsData.length >= 2){
+            leftHand = handsData[0];
+            rightHand = handsData[1];
+        }
+
+        // draw all dots and hand mesh
+        handsData.forEach((hand, handIndex) => {
+
+            for(let i=0;i<hand.length;i++){
+
+                const lm = hand[i];
+
+                const x = (1 - lm.x) * p.width;
+                const y = lm.y * p.height;
+
+                const colors = [
+                    "#00ffff",
+                    "#ff00ff",
+                    "#ffff00"
+                ];
+
+                drawLandmark(
+                    x,
+                    y,
+                    i % 2 === 0 ? 10 : 7,
+                    colors[i % colors.length]
+                );
+            }
+
+            // connect whole hand skeleton
+            p.strokeWeight(1.5);
+
+            for(let i=0;i<hand.length-1;i++){
+
+                const a = hand[i];
+                const b = hand[i+1];
+
+                const ax = (1 - a.x) * p.width;
+                const ay = a.y * p.height;
+
+                const bx = (1 - b.x) * p.width;
+                const by = b.y * p.height;
+
+                p.stroke(0,255,255,80);
+
+                p.drawingContext.shadowBlur = 10;
+                p.drawingContext.shadowColor = "#00ffff";
+
+                p.line(ax, ay, bx, by);
+            }
+        });
+
+        // connect fingertips between hands
+        if(leftHand && rightHand){
+
+            for(let i=0;i<fingertipIndices.length;i++){
+
+                const leftTip = leftHand[fingertipIndices[i]];
+                const rightTip = rightHand[fingertipIndices[i]];
+
+                const lx = (1 - leftTip.x) * p.width;
+                const ly = leftTip.y * p.height;
+
+                const rx = (1 - rightTip.x) * p.width;
+                const ry = rightTip.y * p.height;
+
+                const distAmount = p.dist(lx,ly,rx,ry);
+
+                drawGlowLine(lx,ly,rx,ry,distAmount);
+
+                // fingertip touch explosion
+                if(distAmount < 40){
+                    spawnParticles(
+                        (lx + rx) / 2,
+                        (ly + ry) / 2
+                    );
+                }
+            }
+
+            // FULL STRING WEB EFFECT
+            for(let l=0;l<fingertipIndices.length;l++){
+
+                for(let r=0;r<fingertipIndices.length;r++){
+
+                    const leftTip = leftHand[fingertipIndices[l]];
+                    const rightTip = rightHand[fingertipIndices[r]];
+
+                    const lx = (1 - leftTip.x) * p.width;
+                    const ly = leftTip.y * p.height;
+
+                    const rx = (1 - rightTip.x) * p.width;
+                    const ry = rightTip.y * p.height;
+
+                    const d = p.dist(lx,ly,rx,ry);
+
+                    if(d < 450){
+
+                        p.strokeWeight(0.7);
+
+                        p.stroke(
+                            255,
+                            0,
+                            255,
+                            p.map(d,0,450,180,0)
+                        );
+
+                        p.drawingContext.shadowBlur = 12;
+                        p.drawingContext.shadowColor = "#ff00ff";
+
+                        p.line(lx,ly,rx,ry);
+                    }
+                }
+            }
+        }
+    };
+});
+</script>
+
+</body>
+</html>
