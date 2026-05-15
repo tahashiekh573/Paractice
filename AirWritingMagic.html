@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Air Writing Magic</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<style>
+
+*{
+  margin:0;
+  padding:0;
+  box-sizing:border-box;
+}
+
+body{
+  overflow:hidden;
+  background:black;
+  font-family:Arial,sans-serif;
+}
+
+video{
+  position:fixed;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  transform:scaleX(-1);
+  opacity:.18;
+  filter:saturate(1.4);
+}
+
+canvas{
+  position:fixed;
+  inset:0;
+  width:100%;
+  height:100%;
+}
+
+.panel{
+  position:fixed;
+  top:20px;
+  left:20px;
+  z-index:10;
+  color:white;
+  width:340px;
+
+  padding:18px;
+
+  border-radius:18px;
+
+  background:rgba(0,0,0,.4);
+
+  backdrop-filter:blur(12px);
+
+  border:1px solid rgba(255,255,255,.1);
+}
+
+.panel h2{
+
+  margin-bottom:10px;
+
+  font-size:24px;
+
+  background:linear-gradient(
+  90deg,
+  #ff00ff,
+  #00ffff,
+  #00ff66,
+  #ffff00,
+  #ff3300);
+
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+
+.panel p{
+
+  line-height:1.6;
+  font-size:14px;
+}
+
+button{
+
+  margin-top:14px;
+
+  padding:10px 16px;
+
+  border:none;
+
+  border-radius:12px;
+
+  cursor:pointer;
+
+  font-weight:bold;
+
+  background:linear-gradient(
+  90deg,
+  #00ffff,
+  #ff00ff);
+
+  color:white;
+}
+
+</style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline></video>
+
+<canvas id="canvas"></canvas>
+
+<div class="panel">
+
+  <h2>Air Writing Magic</h2>
+
+  <p>
+    ✍️ Use INDEX finger to write in air<br><br>
+
+    🖐️ Open palm = stop drawing<br><br>
+
+    🌈 Rainbow glowing trail<br><br>
+
+    ⚡ Fast writing creates sparks
+  </p>
+
+  <button onclick="clearCanvas()">
+    Clear Screen
+  </button>
+</div>
+
+<script>
+
+const video =
+document.getElementById("video");
+
+const canvas =
+document.getElementById("canvas");
+
+const ctx =
+canvas.getContext("2d");
+
+let w = innerWidth;
+let h = innerHeight;
+
+canvas.width = w;
+canvas.height = h;
+
+window.addEventListener("resize",()=>{
+
+  w = innerWidth;
+  h = innerHeight;
+
+  canvas.width = w;
+  canvas.height = h;
+});
+
+// ==========================
+// AUDIO
+// ==========================
+
+let audioStarted = false;
+
+const audioCtx =
+new (window.AudioContext || window.webkitAudioContext)();
+
+function playWriteSound(speed){
+
+  if(!audioStarted){
+
+    audioCtx.resume();
+    audioStarted = true;
+  }
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = "triangle";
+
+  osc.frequency.value =
+  180 + speed * 4;
+
+  gain.gain.value = 0.03;
+
+  osc.connect(gain);
+
+  gain.connect(audioCtx.destination);
+
+  osc.start();
+
+  gain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    audioCtx.currentTime + .15
+  );
+
+  osc.stop(audioCtx.currentTime + .15);
+}
+
+// ==========================
+// PARTICLES
+// ==========================
+
+const particles = [];
+
+class Particle{
+
+  constructor(x,y,hue){
+
+    this.x = x;
+    this.y = y;
+
+    this.vx =
+    (Math.random()-.5)*4;
+
+    this.vy =
+    (Math.random()-.5)*4;
+
+    this.life = 1;
+
+    this.size =
+    Math.random()*5+2;
+
+    this.hue = hue;
+  }
+
+  update(){
+
+    this.x += this.vx;
+    this.y += this.vy;
+
+    this.life -= .02;
+  }
+
+  draw(){
+
+    ctx.save();
+
+    ctx.globalAlpha =
+    this.life;
+
+    ctx.fillStyle =
+    `hsl(${this.hue},100%,60%)`;
+
+    ctx.shadowBlur = 20;
+
+    ctx.shadowColor =
+    `hsl(${this.hue},100%,60%)`;
+
+    ctx.beginPath();
+
+    ctx.arc(
+      this.x,
+      this.y,
+      this.size,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+// ==========================
+// DRAW STORAGE
+// ==========================
+
+const strokes = [];
+
+let previousPoint = null;
+
+// ==========================
+// CLEAR
+// ==========================
+
+function clearCanvas(){
+
+  strokes.length = 0;
+}
+
+// ==========================
+// HANDS
+// ==========================
+
+const hands = new Hands({
+
+  locateFile:(file)=>{
+
+    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+  }
+});
+
+hands.setOptions({
+
+  maxNumHands:1,
+
+  modelComplexity:1,
+
+  minDetectionConfidence:.7,
+
+  minTrackingConfidence:.7
+});
+
+// ==========================
+// HAND DETECTION
+// ==========================
+
+hands.onResults(results=>{
+
+  if(
+    !results.multiHandLandmarks ||
+    results.multiHandLandmarks.length === 0
+  ){
+
+    previousPoint = null;
+    return;
+  }
+
+  const landmarks =
+  results.multiHandLandmarks[0];
+
+  const indexTip = landmarks[8];
+
+  const middleTip = landmarks[12];
+
+  const wrist = landmarks[0];
+
+  const x =
+  w - (indexTip.x * w);
+
+  const y =
+  indexTip.y * h;
+
+  const mx =
+  w - (middleTip.x * w);
+
+  const my =
+  middleTip.y * h;
+
+  // OPEN PALM DETECTION
+
+  const palmOpen =
+  Math.abs(indexTip.y - wrist.y) > .25 &&
+  Math.abs(middleTip.y - wrist.y) > .25;
+
+  // DRAW ONLY WHEN HAND CLOSED
+
+  if(!palmOpen){
+
+    const point = {x,y};
+
+    let speed = 0;
+
+    if(previousPoint){
+
+      speed =
+      Math.hypot(
+        point.x - previousPoint.x,
+        point.y - previousPoint.y
+      );
+
+      const hue =
+      (Date.now()*0.08 + speed*3)%360;
+
+      strokes.push({
+
+        x1:previousPoint.x,
+        y1:previousPoint.y,
+
+        x2:point.x,
+        y2:point.y,
+
+        hue,
+        width:3 + speed*.05
+      });
+
+      if(speed > 8){
+
+        playWriteSound(speed);
+
+        for(let i=0;i<3;i++){
+
+          particles.push(
+            new Particle(x,y,hue)
+          );
+        }
+      }
+    }
+
+    previousPoint = point;
+  }
+
+  else{
+
+    previousPoint = null;
+  }
+});
+
+// ==========================
+// RENDER
+// ==========================
+
+function render(){
+
+  ctx.clearRect(0,0,w,h);
+
+  // DRAW STROKES
+
+  strokes.forEach(line=>{
+
+    ctx.save();
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      line.x1,
+      line.y1
+    );
+
+    ctx.lineTo(
+      line.x2,
+      line.y2
+    );
+
+    ctx.lineWidth =
+    line.width;
+
+    ctx.lineCap = "round";
+
+    ctx.strokeStyle =
+    `hsl(${line.hue},100%,60%)`;
+
+    ctx.shadowBlur = 20;
+
+    ctx.shadowColor =
+    `hsl(${line.hue},100%,60%)`;
+
+    ctx.stroke();
+
+    ctx.restore();
+  });
+
+  // PARTICLES
+
+  for(let i=particles.length-1;i>=0;i--){
+
+    particles[i].update();
+
+    particles[i].draw();
+
+    if(particles[i].life <= 0){
+
+      particles.splice(i,1);
+    }
+  }
+
+  requestAnimationFrame(render);
+}
+
+// ==========================
+// CAMERA
+// ==========================
+
+async function initCamera(){
+
+  const stream =
+  await navigator.mediaDevices.getUserMedia({
+
+    video:{
+      width:1280,
+      height:720
+    },
+
+    audio:false
+  });
+
+  video.srcObject = stream;
+
+  const camera =
+  new Camera(video,{
+
+    onFrame:async()=>{
+
+      await hands.send({
+        image:video
+      });
+    },
+
+    width:1280,
+    height:720
+  });
+
+  camera.start();
+}
+
+initCamera().catch(err=>{
+
+  alert("Camera permission denied");
+
+  console.error(err);
+});
+
+render();
+
+</script>
+</body>
+</html>

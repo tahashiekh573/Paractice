@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Cosmic Energy Hands</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<style>
+
+*{
+  margin:0;
+  padding:0;
+  box-sizing:border-box;
+}
+
+body{
+  overflow:hidden;
+  background:black;
+  font-family:Arial,sans-serif;
+}
+
+video{
+  position:fixed;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  transform:scaleX(-1);
+  opacity:.15;
+  filter:contrast(1.2) saturate(1.4);
+}
+
+canvas{
+  position:fixed;
+  inset:0;
+  width:100%;
+  height:100%;
+}
+
+.panel{
+  position:fixed;
+  top:20px;
+  left:20px;
+  z-index:5;
+  color:white;
+  padding:16px;
+  border-radius:18px;
+  background:rgba(0,0,0,.4);
+  backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,.1);
+  width:320px;
+}
+
+.panel h2{
+  font-size:22px;
+  margin-bottom:10px;
+
+  background:linear-gradient(
+  90deg,
+  #ff00ff,
+  #00ffff,
+  #00ff66,
+  #ffff00,
+  #ff3300);
+
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+
+.panel p{
+  font-size:14px;
+  line-height:1.6;
+}
+
+</style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+
+<div class="panel">
+  <h2>Cosmic Energy Hands</h2>
+
+  <p>
+    ✨ Move hands to create cosmic trails<br><br>
+    🌌 Join both hands to create black hole<br><br>
+    ⚡ Fast movement creates lightning<br><br>
+    🔥 Open palms release energy particles
+  </p>
+</div>
+
+<script>
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+let w = innerWidth;
+let h = innerHeight;
+
+canvas.width = w;
+canvas.height = h;
+
+window.addEventListener("resize",()=>{
+
+  w = innerWidth;
+  h = innerHeight;
+
+  canvas.width = w;
+  canvas.height = h;
+});
+
+const handsArray = [];
+
+const stars = [];
+const particles = [];
+const lightnings = [];
+
+const fingertipIds = [4,8,12,16,20];
+
+// =========================
+// AUDIO
+// =========================
+
+let audioStarted = false;
+
+const audioCtx =
+new (window.AudioContext || window.webkitAudioContext)();
+
+function playSound(freq){
+
+  if(!audioStarted){
+
+    audioCtx.resume();
+    audioStarted = true;
+  }
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = "sawtooth";
+
+  osc.frequency.value = freq;
+
+  gain.gain.value = 0.04;
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc.start();
+
+  gain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    audioCtx.currentTime + .3
+  );
+
+  osc.stop(audioCtx.currentTime + .3);
+}
+
+// =========================
+// BACKGROUND STARS
+// =========================
+
+for(let i=0;i<160;i++){
+
+  stars.push({
+
+    x:Math.random()*w,
+    y:Math.random()*h,
+    r:Math.random()*2,
+    s:Math.random()*1
+  });
+}
+
+// =========================
+// PARTICLES
+// =========================
+
+class Particle{
+
+  constructor(x,y,hue){
+
+    this.x = x;
+    this.y = y;
+
+    this.vx = (Math.random()-.5)*8;
+    this.vy = (Math.random()-.5)*8;
+
+    this.life = 1;
+
+    this.size = Math.random()*6+2;
+
+    this.hue = hue;
+  }
+
+  update(){
+
+    this.x += this.vx;
+    this.y += this.vy;
+
+    this.life -= .015;
+  }
+
+  draw(){
+
+    ctx.save();
+
+    ctx.globalAlpha = this.life;
+
+    ctx.fillStyle =
+    `hsl(${this.hue},100%,60%)`;
+
+    ctx.shadowColor =
+    `hsl(${this.hue},100%,60%)`;
+
+    ctx.shadowBlur = 25;
+
+    ctx.beginPath();
+
+    ctx.arc(
+      this.x,
+      this.y,
+      this.size,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+// =========================
+// LIGHTNING
+// =========================
+
+class Lightning{
+
+  constructor(x1,y1,x2,y2){
+
+    this.x1 = x1;
+    this.y1 = y1;
+
+    this.x2 = x2;
+    this.y2 = y2;
+
+    this.life = 1;
+  }
+
+  update(){
+
+    this.life -= .06;
+  }
+
+  draw(){
+
+    ctx.save();
+
+    ctx.globalAlpha = this.life;
+
+    ctx.strokeStyle = "white";
+
+    ctx.lineWidth = 3;
+
+    ctx.shadowColor = "#00ffff";
+
+    ctx.shadowBlur = 25;
+
+    ctx.beginPath();
+
+    let prevX = this.x1;
+    let prevY = this.y1;
+
+    for(let i=1;i<=12;i++){
+
+      const t = i/12;
+
+      const nx =
+      this.x1 +
+      (this.x2-this.x1)*t +
+      (Math.random()-.5)*25;
+
+      const ny =
+      this.y1 +
+      (this.y2-this.y1)*t +
+      (Math.random()-.5)*25;
+
+      ctx.lineTo(nx,ny);
+
+      prevX = nx;
+      prevY = ny;
+    }
+
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+// =========================
+// UTILITY
+// =========================
+
+function dist(a,b){
+
+  return Math.hypot(
+    a.x-b.x,
+    a.y-b.y
+  );
+}
+
+// =========================
+// DRAW
+// =========================
+
+function drawStars(){
+
+  stars.forEach(star=>{
+
+    ctx.save();
+
+    ctx.fillStyle = "white";
+
+    ctx.globalAlpha =
+    .3 + Math.sin(Date.now()*0.002 + star.x)*.7;
+
+    ctx.beginPath();
+
+    ctx.arc(
+      star.x,
+      star.y,
+      star.r,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fill();
+
+    ctx.restore();
+  });
+}
+
+function drawPortal(x,y,size){
+
+  ctx.save();
+
+  for(let i=0;i<8;i++){
+
+    ctx.beginPath();
+
+    ctx.strokeStyle =
+    `hsla(${Date.now()*0.05+i*45},100%,60%,.5)`;
+
+    ctx.lineWidth = 6;
+
+    ctx.shadowBlur = 20;
+
+    ctx.shadowColor =
+    `hsl(${Date.now()*0.05+i*45},100%,60%)`;
+
+    ctx.arc(
+      x,
+      y,
+      size+i*8,
+      0,
+      Math.PI*2
+    );
+
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// =========================
+// RENDER
+// =========================
+
+function render(){
+
+  ctx.clearRect(0,0,w,h);
+
+  drawStars();
+
+  const fingerPoints = [];
+
+  handsArray.forEach((hand,handIndex)=>{
+
+    fingertipIds.forEach((id,index)=>{
+
+      const p = hand[id];
+
+      if(!p) return;
+
+      fingerPoints.push(p);
+
+      const hue =
+      (Date.now()*0.08 + index*60)%360;
+
+      // finger glow
+
+      ctx.save();
+
+      ctx.beginPath();
+
+      ctx.arc(
+        p.x,
+        p.y,
+        12,
+        0,
+        Math.PI*2
+      );
+
+      ctx.fillStyle =
+      `hsl(${hue},100%,65%)`;
+
+      ctx.shadowBlur = 35;
+
+      ctx.shadowColor =
+      `hsl(${hue},100%,60%)`;
+
+      ctx.fill();
+
+      ctx.restore();
+
+      // particles
+
+      if(Math.random()<0.35){
+
+        particles.push(
+          new Particle(p.x,p.y,hue)
+        );
+      }
+    });
+  });
+
+  // LIGHTNING CONNECTIONS
+
+  for(let i=0;i<fingerPoints.length;i++){
+
+    for(let j=i+1;j<fingerPoints.length;j++){
+
+      const a = fingerPoints[i];
+      const b = fingerPoints[j];
+
+      const d = dist(a,b);
+
+      if(d < 180){
+
+        if(Math.random()<0.03){
+
+          lightnings.push(
+            new Lightning(
+              a.x,
+              a.y,
+              b.x,
+              b.y
+            )
+          );
+
+          playSound(150 + d);
+        }
+      }
+    }
+  }
+
+  // BLACK HOLE / PORTAL
+
+  if(fingerPoints.length >= 2){
+
+    const a = fingerPoints[0];
+    const b = fingerPoints[1];
+
+    const d = dist(a,b);
+
+    if(d < 120){
+
+      const mx = (a.x+b.x)/2;
+      const my = (a.y+b.y)/2;
+
+      drawPortal(
+        mx,
+        my,
+        30 + Math.sin(Date.now()*0.01)*10
+      );
+
+      ctx.save();
+
+      const grd =
+      ctx.createRadialGradient(
+        mx,my,10,
+        mx,my,140
+      );
+
+      grd.addColorStop(0,"rgba(0,0,0,1)");
+      grd.addColorStop(1,"rgba(0,255,255,0)");
+
+      ctx.fillStyle = grd;
+
+      ctx.beginPath();
+
+      ctx.arc(mx,my,140,0,Math.PI*2);
+
+      ctx.fill();
+
+      ctx.restore();
+
+      playSound(90);
+    }
+  }
+
+  // PARTICLES
+
+  for(let i=particles.length-1;i>=0;i--){
+
+    particles[i].update();
+    particles[i].draw();
+
+    if(particles[i].life<=0){
+
+      particles.splice(i,1);
+    }
+  }
+
+  // LIGHTNING
+
+  for(let i=lightnings.length-1;i>=0;i--){
+
+    lightnings[i].update();
+    lightnings[i].draw();
+
+    if(lightnings[i].life<=0){
+
+      lightnings.splice(i,1);
+    }
+  }
+
+  requestAnimationFrame(render);
+}
+
+// =========================
+// MEDIAPIPE
+// =========================
+
+const hands = new Hands({
+
+  locateFile:(file)=>{
+
+    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+  }
+});
+
+hands.setOptions({
+
+  maxNumHands:2,
+
+  modelComplexity:1,
+
+  minDetectionConfidence:.7,
+
+  minTrackingConfidence:.7
+});
+
+hands.onResults(results=>{
+
+  handsArray.length = 0;
+
+  if(results.multiHandLandmarks){
+
+    results.multiHandLandmarks.forEach(landmarks=>{
+
+      const mapped = {};
+
+      landmarks.forEach((lm,i)=>{
+
+        mapped[i] = {
+
+          x:w-(lm.x*w),
+          y:lm.y*h
+        };
+      });
+
+      handsArray.push(mapped);
+    });
+  }
+});
+
+// =========================
+// CAMERA
+// =========================
+
+async function initCamera(){
+
+  const stream =
+  await navigator.mediaDevices.getUserMedia({
+
+    video:{
+      width:1280,
+      height:720
+    },
+
+    audio:false
+  });
+
+  video.srcObject = stream;
+
+  const camera = new Camera(video,{
+
+    onFrame:async()=>{
+
+      await hands.send({
+        image:video
+      });
+    },
+
+    width:1280,
+    height:720
+  });
+
+  camera.start();
+}
+
+initCamera().catch(err=>{
+
+  alert("Camera access denied");
+
+  console.error(err);
+});
+
+render();
+
+</script>
+</body>
+</html>

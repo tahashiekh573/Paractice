@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>AI Robot Hand Assistant</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<style>
+
+*{
+  margin:0;
+  padding:0;
+  box-sizing:border-box;
+}
+
+body{
+  overflow:hidden;
+  background:black;
+  font-family:Arial,sans-serif;
+}
+
+video{
+  position:fixed;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  transform:scaleX(-1);
+  opacity:.18;
+  filter:saturate(1.3);
+}
+
+canvas{
+  position:fixed;
+  inset:0;
+  width:100%;
+  height:100%;
+}
+
+.panel{
+
+  position:fixed;
+
+  top:20px;
+  left:20px;
+
+  width:350px;
+
+  padding:18px;
+
+  border-radius:20px;
+
+  background:rgba(0,0,0,.45);
+
+  backdrop-filter:blur(12px);
+
+  border:1px solid rgba(255,255,255,.1);
+
+  color:white;
+
+  z-index:10;
+}
+
+.panel h2{
+
+  margin-bottom:12px;
+
+  font-size:24px;
+
+  background:linear-gradient(
+  90deg,
+  #00ffff,
+  #00ff66,
+  #ff00ff,
+  #ffff00);
+
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+
+.panel p{
+
+  line-height:1.6;
+  font-size:14px;
+}
+
+.status{
+
+  margin-top:16px;
+
+  padding:12px;
+
+  border-radius:12px;
+
+  background:rgba(255,255,255,.06);
+
+  border:1px solid rgba(255,255,255,.08);
+
+  min-height:90px;
+
+  font-size:15px;
+
+  line-height:1.6;
+}
+
+.robot-eye{
+
+  position:fixed;
+
+  top:50%;
+  left:50%;
+
+  transform:translate(-50%,-50%);
+
+  width:180px;
+  height:180px;
+
+  border-radius:50%;
+
+  border:4px solid cyan;
+
+  box-shadow:
+  0 0 20px cyan,
+  0 0 60px cyan;
+
+  z-index:2;
+}
+
+.robot-core{
+
+  position:absolute;
+
+  inset:35px;
+
+  border-radius:50%;
+
+  background:
+  radial-gradient(circle,
+  rgba(0,255,255,.9),
+  rgba(0,255,255,.1));
+
+  animation:pulse 2s infinite;
+}
+
+@keyframes pulse{
+
+  0%{
+    transform:scale(.9);
+  }
+
+  50%{
+    transform:scale(1.1);
+  }
+
+  100%{
+    transform:scale(.9);
+  }
+}
+
+</style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline></video>
+
+<canvas id="canvas"></canvas>
+
+<div class="robot-eye">
+  <div class="robot-core"></div>
+</div>
+
+<div class="panel">
+
+  <h2>AI Robot Assistant</h2>
+
+  <p>
+    🤖 Show hand gestures to talk with robot<br><br>
+
+    ✋ Open Palm = Hello<br>
+    ✊ Fist = Angry Mode<br>
+    ☝️ One Finger = Ask Question<br>
+    ✌️ Two Fingers = Joke Mode
+  </p>
+
+  <div class="status" id="status">
+    Waiting for hand gesture...
+  </div>
+</div>
+
+<script>
+
+const video =
+document.getElementById("video");
+
+const canvas =
+document.getElementById("canvas");
+
+const ctx =
+canvas.getContext("2d");
+
+const statusBox =
+document.getElementById("status");
+
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+
+// ======================
+// AUDIO
+// ======================
+
+let audioStarted = false;
+
+const audioCtx =
+new (window.AudioContext || window.webkitAudioContext)();
+
+function speak(text){
+
+  const speech =
+  new SpeechSynthesisUtterance(text);
+
+  speech.rate = .95;
+
+  speech.pitch = .7;
+
+  speech.volume = 1;
+
+  speech.lang = "en-US";
+
+  window.speechSynthesis.cancel();
+
+  window.speechSynthesis.speak(speech);
+}
+
+function robotBeep(freq=200){
+
+  if(!audioStarted){
+
+    audioCtx.resume();
+
+    audioStarted = true;
+  }
+
+  const osc =
+  audioCtx.createOscillator();
+
+  const gain =
+  audioCtx.createGain();
+
+  osc.type = "square";
+
+  osc.frequency.value = freq;
+
+  gain.gain.value = .04;
+
+  osc.connect(gain);
+
+  gain.connect(audioCtx.destination);
+
+  osc.start();
+
+  gain.gain.exponentialRampToValueAtTime(
+    .0001,
+    audioCtx.currentTime + .2
+  );
+
+  osc.stop(audioCtx.currentTime + .2);
+}
+
+// ======================
+// PARTICLES
+// ======================
+
+const particles = [];
+
+class Particle{
+
+  constructor(x,y){
+
+    this.x = x;
+    this.y = y;
+
+    this.vx =
+    (Math.random()-.5)*6;
+
+    this.vy =
+    (Math.random()-.5)*6;
+
+    this.life = 1;
+
+    this.size =
+    Math.random()*5+2;
+
+    this.hue =
+    Math.random()*360;
+  }
+
+  update(){
+
+    this.x += this.vx;
+    this.y += this.vy;
+
+    this.life -= .02;
+  }
+
+  draw(){
+
+    ctx.save();
+
+    ctx.globalAlpha =
+    this.life;
+
+    ctx.fillStyle =
+    `hsl(${this.hue},100%,60%)`;
+
+    ctx.shadowBlur = 20;
+
+    ctx.shadowColor =
+    `hsl(${this.hue},100%,60%)`;
+
+    ctx.beginPath();
+
+    ctx.arc(
+      this.x,
+      this.y,
+      this.size,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+// ======================
+// HAND DETECTION
+// ======================
+
+const hands = new Hands({
+
+  locateFile:(file)=>{
+
+    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+  }
+});
+
+hands.setOptions({
+
+  maxNumHands:1,
+
+  modelComplexity:1,
+
+  minDetectionConfidence:.7,
+
+  minTrackingConfidence:.7
+});
+
+let lastGesture = "";
+
+function detectGesture(landmarks){
+
+  const tipIds = [8,12,16,20];
+
+  let fingers = 0;
+
+  tipIds.forEach(id=>{
+
+    if(
+      landmarks[id].y <
+      landmarks[id-2].y
+    ){
+
+      fingers++;
+    }
+  });
+
+  // thumb
+
+  if(
+    landmarks[4].x <
+    landmarks[3].x
+  ){
+
+    fingers++;
+  }
+
+  return fingers;
+}
+
+hands.onResults(results=>{
+
+  if(
+    !results.multiHandLandmarks ||
+    results.multiHandLandmarks.length===0
+  ){
+
+    return;
+  }
+
+  const landmarks =
+  results.multiHandLandmarks[0];
+
+  const gesture =
+  detectGesture(landmarks);
+
+  const x =
+  innerWidth -
+  (landmarks[8].x * innerWidth);
+
+  const y =
+  landmarks[8].y * innerHeight;
+
+  for(let i=0;i<5;i++){
+
+    particles.push(
+      new Particle(x,y)
+    );
+  }
+
+  if(gesture === lastGesture) return;
+
+  lastGesture = gesture;
+
+  // ======================
+  // GESTURES
+  // ======================
+
+  if(gesture === 5){
+
+    statusBox.innerHTML =
+    "🤖 HELLO HUMAN... SYSTEM ONLINE.";
+
+    speak(
+      "Hello human. I am online and ready."
+    );
+
+    robotBeep(220);
+  }
+
+  else if(gesture === 0){
+
+    statusBox.innerHTML =
+    "😈 WARNING... ANGRY ENERGY DETECTED.";
+
+    speak(
+      "Warning. Angry energy detected."
+    );
+
+    robotBeep(120);
+  }
+
+  else if(gesture === 1){
+
+    statusBox.innerHTML =
+    "🧠 ASKING QUESTION MODE ACTIVATED.";
+
+    speak(
+      "I am listening to your question."
+    );
+
+    robotBeep(340);
+  }
+
+  else if(gesture === 2){
+
+    const jokes = [
+
+      "Why did the robot sleep? Because it had low battery.",
+
+      "Humans are funny creatures.",
+
+      "I tried emotions once. System crashed.",
+
+      "Beep beep. Joke mode activated."
+    ];
+
+    const random =
+    jokes[
+      Math.floor(Math.random()*jokes.length)
+    ];
+
+    statusBox.innerHTML =
+    "😂 " + random;
+
+    speak(random);
+
+    robotBeep(500);
+  }
+
+  else if(gesture === 3){
+
+    statusBox.innerHTML =
+    "⚡ POWER LEVEL INCREASING.";
+
+    speak(
+      "Power level increasing."
+    );
+
+    robotBeep(700);
+  }
+});
+
+// ======================
+// RENDER
+// ======================
+
+function render(){
+
+  ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  for(
+    let i=particles.length-1;
+    i>=0;
+    i--
+  ){
+
+    particles[i].update();
+
+    particles[i].draw();
+
+    if(
+      particles[i].life <= 0
+    ){
+
+      particles.splice(i,1);
+    }
+  }
+
+  requestAnimationFrame(render);
+}
+
+// ======================
+// CAMERA
+// ======================
+
+async function initCamera(){
+
+  const stream =
+  await navigator.mediaDevices.getUserMedia({
+
+    video:{
+      width:1280,
+      height:720
+    },
+
+    audio:false
+  });
+
+  video.srcObject = stream;
+
+  const camera =
+  new Camera(video,{
+
+    onFrame:async()=>{
+
+      await hands.send({
+        image:video
+      });
+    },
+
+    width:1280,
+    height:720
+  });
+
+  camera.start();
+}
+
+initCamera().catch(err=>{
+
+  alert(
+    "Camera permission denied"
+  );
+
+  console.error(err);
+});
+
+render();
+
+</script>
+</body>
+</html>
