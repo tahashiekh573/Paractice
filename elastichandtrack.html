@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -319,5 +319,495 @@
 
     render();
   </script>
+</body>
+</html> -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rainbow Elastic String Hand Game</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      overflow: hidden;
+      background: #000;
+      font-family: Arial, sans-serif;
+    }
+
+    video {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1);
+      opacity: 0.22;
+      z-index: 1;
+      filter: saturate(1.2);
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 2;
+    }
+
+    .hud {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      z-index: 5;
+      color: white;
+      background: rgba(0,0,0,0.45);
+      padding: 14px 18px;
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+      max-width: 340px;
+      line-height: 1.5;
+      border: 1px solid rgba(255,255,255,0.15);
+      box-shadow: 0 0 30px rgba(255,255,255,0.08);
+    }
+
+    .hud h2 {
+      font-size: 22px;
+      margin-bottom: 8px;
+      background: linear-gradient(90deg,
+      red, orange, yellow, lime, cyan, blue, violet);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hud p {
+      font-size: 14px;
+      opacity: 0.95;
+    }
+
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+      animation-duration: 0.25s;
+      animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
+    }
+  </style>
+</head>
+<body>
+
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+
+  <div class="hud">
+    <h2>Rainbow Elastic String</h2>
+    <p>
+      • Raise both hands in front of camera<br><br>
+      • Rainbow strings connect fingertips<br>
+      • Fast finger movement creates sparks<br>
+      • Strong movement creates magical sound<br>
+      • Pull hands apart to increase energy
+    </p>
+  </div>
+
+  <script>
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+
+    canvas.width = width;
+    canvas.height = height;
+
+    window.addEventListener('resize', () => {
+      width = window.innerWidth;
+      height = window.innerHeight;
+
+      canvas.width = width;
+      canvas.height = height;
+    });
+
+    const fingertipIds = [4, 8, 12, 16, 20];
+
+    let handPoints = [];
+    let prevPoints = [];
+
+    const sparks = [];
+
+    // =========================
+    // SOUND SYSTEM
+    // =========================
+
+    let audioStarted = false;
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    function playEnergySound(speed) {
+
+      if (!audioStarted) {
+        audioCtx.resume();
+        audioStarted = true;
+      }
+
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+
+      osc.type = 'sine';
+
+      osc.frequency.value = 150 + speed * 8;
+
+      gain.gain.value = 0.05;
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      osc.start();
+
+      gain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        audioCtx.currentTime + 0.25
+      );
+
+      osc.stop(audioCtx.currentTime + 0.25);
+    }
+
+    // =========================
+    // SPARK CLASS
+    // =========================
+
+    class Spark {
+
+      constructor(x, y, hue) {
+        this.x = x;
+        this.y = y;
+
+        this.vx = (Math.random() - 0.5) * 10;
+        this.vy = (Math.random() - 0.5) * 10;
+
+        this.life = 1;
+
+        this.size = Math.random() * 4 + 2;
+
+        this.hue = hue;
+      }
+
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+
+        this.life -= 0.02;
+      }
+
+      draw() {
+
+        ctx.save();
+
+        ctx.globalAlpha = this.life;
+
+        ctx.fillStyle = `hsl(${this.hue},100%,60%)`;
+
+        ctx.shadowColor = `hsl(${this.hue},100%,60%)`;
+
+        ctx.shadowBlur = 25;
+
+        ctx.beginPath();
+
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+
+        ctx.fill();
+
+        ctx.restore();
+      }
+    }
+
+    // =========================
+    // UTILITY
+    // =========================
+
+    function distance(a, b) {
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+
+    function midpoint(a, b) {
+      return {
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2
+      };
+    }
+
+    // =========================
+    // DRAW STRING
+    // =========================
+
+    function drawGlowLine(a, b, energy, hue) {
+
+      const dist = distance(a, b);
+
+      const tension = Math.min(dist / 250, 1);
+
+      const mid = midpoint(a, b);
+
+      const sag = (1 - tension) * 35;
+
+      const wave =
+        Math.sin(Date.now() * 0.01 + dist * 0.05)
+        * energy
+        * 12;
+
+      ctx.save();
+
+      ctx.lineWidth = 2 + tension * 5;
+
+      ctx.strokeStyle =
+        `hsla(${hue},100%,60%,${0.45 + tension})`;
+
+      ctx.shadowColor =
+        `hsl(${hue},100%,60%)`;
+
+      ctx.shadowBlur = 25 + tension * 40;
+
+      ctx.beginPath();
+
+      ctx.moveTo(a.x, a.y);
+
+      ctx.quadraticCurveTo(
+        mid.x,
+        mid.y + sag + wave,
+        b.x,
+        b.y
+      );
+
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // =========================
+    // DRAW FINGERS
+    // =========================
+
+    function drawFinger(point, speed, hue) {
+
+      ctx.save();
+
+      const glow = 20 + speed * 2;
+
+      ctx.beginPath();
+
+      ctx.arc(
+        point.x,
+        point.y,
+        8 + speed * 0.25,
+        0,
+        Math.PI * 2
+      );
+
+      ctx.fillStyle = `hsl(${hue},100%,70%)`;
+
+      ctx.shadowColor = `hsl(${hue},100%,60%)`;
+
+      ctx.shadowBlur = glow;
+
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    // =========================
+    // RENDER LOOP
+    // =========================
+
+    function render() {
+
+      ctx.clearRect(0, 0, width, height);
+
+      const allPoints = [];
+
+      handPoints.forEach((hand, handIndex) => {
+
+        fingertipIds.forEach((id, i) => {
+
+          if (!hand[id]) return;
+
+          const point = hand[id];
+
+          allPoints.push(point);
+
+          let speed = 0;
+
+          if (
+            prevPoints[handIndex] &&
+            prevPoints[handIndex][id]
+          ) {
+            speed = distance(
+              point,
+              prevPoints[handIndex][id]
+            );
+          }
+
+          const hue =
+            (Date.now() * 0.08 + i * 72 + speed * 3) % 360;
+
+          drawFinger(point, speed, hue);
+
+          // SPARKS
+          if (speed > 25) {
+
+            for (let s = 0; s < 6; s++) {
+
+              sparks.push(
+                new Spark(point.x, point.y, hue)
+              );
+            }
+
+            playEnergySound(speed);
+          }
+        });
+      });
+
+      // CONNECT STRINGS
+
+      for (let i = 0; i < allPoints.length; i++) {
+
+        for (let j = i + 1; j < allPoints.length; j++) {
+
+          const a = allPoints[i];
+          const b = allPoints[j];
+
+          const dist = distance(a, b);
+
+          if (dist < 420) {
+
+            const energy =
+              Math.max(0, 1 - dist / 420);
+
+            const hue =
+              (Date.now() * 0.05 + dist) % 360;
+
+            drawGlowLine(a, b, energy, hue);
+          }
+        }
+      }
+
+      // SPARK PARTICLES
+
+      for (let i = sparks.length - 1; i >= 0; i--) {
+
+        sparks[i].update();
+
+        sparks[i].draw();
+
+        if (sparks[i].life <= 0) {
+          sparks.splice(i, 1);
+        }
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    // =========================
+    // MEDIAPIPE HANDS
+    // =========================
+
+    const hands = new Hands({
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+      }
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
+
+    hands.onResults((results) => {
+
+      prevPoints =
+        JSON.parse(JSON.stringify(handPoints));
+
+      handPoints = [];
+
+      if (results.multiHandLandmarks) {
+
+        results.multiHandLandmarks.forEach((landmarks) => {
+
+          const mapped = {};
+
+          landmarks.forEach((lm, i) => {
+
+            mapped[i] = {
+
+              x: width - (lm.x * width),
+
+              y: lm.y * height
+            };
+          });
+
+          handPoints.push(mapped);
+        });
+      }
+    });
+
+    // =========================
+    // CAMERA
+    // =========================
+
+    async function initCamera() {
+
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+
+          video: {
+            width: 1280,
+            height: 720
+          },
+
+          audio: false
+        });
+
+      video.srcObject = stream;
+
+      const camera = new Camera(video, {
+
+        onFrame: async () => {
+
+          await hands.send({
+            image: video
+          });
+        },
+
+        width: 1280,
+        height: 720
+      });
+
+      camera.start();
+    }
+
+    initCamera().catch((err) => {
+
+      alert('Camera access denied or unsupported.');
+
+      console.error(err);
+    });
+
+    render();
+
+  </script>
+
 </body>
 </html>
